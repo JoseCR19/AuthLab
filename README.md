@@ -1,2 +1,2 @@
 # LabAuth
-Para iniciar el laboratorio prueba main
+Para iniciar el laboratorio.
