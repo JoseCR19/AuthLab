@@ -15,8 +15,26 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Set image tag
-        id: vars
         run: echo "TAG=$(git rev-parse --short HEAD)" >> $GITHUB_ENV
+
+      - name: Ensure k3s is running
+        run: |
+          sudo systemctl start k3s || sudo service k3s start || true
+
+          for i in {1..30}; do
+            if sudo k3s kubectl get nodes; then
+              echo "k3s is ready"
+              exit 0
+            fi
+
+            echo "Waiting for k3s..."
+            sleep 2
+          done
+
+          echo "k3s did not start correctly"
+          sudo systemctl status k3s --no-pager || true
+          sudo journalctl -u k3s -n 80 --no-pager || true
+          exit 1
 
       - name: Make mvnw executable
         working-directory: dummy
@@ -31,26 +49,26 @@ jobs:
         run: podman build --no-cache -t localhost/dummy-api:${TAG} .
 
       - name: Save image
-        run: podman save localhost/dummy-api:${TAG} -o dummy-api.tar
+        run: podman save --format docker-archive -o dummy-api.tar localhost/dummy-api:${TAG}
 
       - name: Import into k3s
-        run: sudo k3s ctr images import dummy-api.tar
+        run: sudo k3s ctr -n k8s.io images import dummy-api.tar
 
       - name: Create namespace
         run: |
-          kubectl create namespace cqrs-lab \
-          --dry-run=client -o yaml | kubectl apply -f -
+          sudo k3s kubectl create namespace cqrs-lab \
+            --dry-run=client -o yaml | sudo k3s kubectl apply -f -
 
       - name: Apply Kubernetes manifests
         run: |
-          kubectl apply -f k8s/deployment.yaml -n cqrs-lab
-          kubectl apply -f k8s/service.yaml -n cqrs-lab
+          sudo k3s kubectl apply -f k8s/deployment.yaml -n cqrs-lab
+          sudo k3s kubectl apply -f k8s/service.yaml -n cqrs-lab
 
       - name: Update deployment image
         run: |
-          kubectl set image deployment/dummy-api \
-          dummy-api=localhost/dummy-api:${TAG} -n cqrs-lab
+          sudo k3s kubectl set image deployment/dummy-api \
+            dummy-api=localhost/dummy-api:${TAG} -n cqrs-lab
 
-      - name: Restart rollout
+      - name: Rollout status
         run: |
-          kubectl rollout status deployment/dummy-api -n cqrs-lab
+          sudo k3s kubectl rollout status deployment/dummy-api -n cqrs-lab
